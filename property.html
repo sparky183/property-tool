@@ -1,0 +1,518 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>Property Measure</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  :root {
+    --bg: #f5f3ee;
+    --panel: #ffffff;
+    --ink: #1a1a1a;
+    --muted: #6b6b6b;
+    --line: #d8d4ca;
+    --accent: #c1440e;    /* parcel line */
+    --accent-2: #1d4e7a;  /* building line */
+    --ok: #2d6a3f;
+    --warn: #a06800;
+    --radius: 6px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Helvetica Neue", sans-serif; }
+  body { display: grid; grid-template-rows: auto 1fr; }
+
+  header {
+    padding: 10px 14px; background: var(--ink); color: #fff;
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  }
+  header .title { font-weight: 700; letter-spacing: 0.02em; margin-right: 6px; }
+  header .sub { color: #bdbdbd; font-size: 12px; }
+  header form { display: flex; flex: 1; min-width: 240px; gap: 6px; }
+  header input {
+    flex: 1; padding: 8px 10px; border: 0; border-radius: var(--radius);
+    font-size: 15px; background: #fff; color: var(--ink);
+  }
+  header button {
+    padding: 8px 14px; border: 0; border-radius: var(--radius);
+    background: var(--accent); color: #fff; font-weight: 600; cursor: pointer;
+    font-size: 14px;
+  }
+  header button:disabled { opacity: .5; cursor: wait; }
+  header .print-btn { background: #444; }
+
+  main { display: grid; grid-template-columns: 380px 1fr; min-height: 0; }
+  @media (max-width: 720px) {
+    main { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+    #map { min-height: 50vh; }
+  }
+
+  #panel {
+    background: var(--panel); border-right: 1px solid var(--line);
+    overflow-y: auto; padding: 14px 16px 60px;
+  }
+  #map { width: 100%; height: 100%; min-height: 300px; }
+
+  .status { color: var(--muted); font-size: 13px; margin: 6px 0 12px; }
+  .status.error { color: var(--accent); }
+
+  .section { margin: 14px 0; }
+  .section h3 {
+    margin: 0 0 6px; font-size: 11px; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--muted); font-weight: 700;
+    border-bottom: 1px solid var(--line); padding-bottom: 6px;
+  }
+  .kv { display: grid; grid-template-columns: 110px 1fr; gap: 4px 10px;
+    font-size: 14px; padding: 4px 0; }
+  .kv .k { color: var(--muted); }
+  .kv .v { font-variant-numeric: tabular-nums; }
+
+  .bldg {
+    border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 8px 10px; margin: 8px 0; background: #fafaf7;
+  }
+  .bldg .bldg-title { font-weight: 600; margin-bottom: 4px; font-size: 14px; }
+  .bldg .tag { display: inline-block; font-size: 11px; padding: 1px 6px;
+    background: var(--ink); color: #fff; border-radius: 3px; margin-left: 4px; }
+
+  .note { font-size: 12px; color: var(--muted); margin-top: 4px; font-style: italic; }
+  .warnbox { background: #fff8e6; border: 1px solid #e6d19a; padding: 8px 10px;
+    border-radius: var(--radius); font-size: 13px; color: #6a4f00; margin: 6px 0; }
+
+  .empty { color: var(--muted); font-style: italic; font-size: 14px; padding: 6px 0; }
+
+  .footer-note {
+    position: fixed; bottom: 0; left: 0; width: 380px; padding: 6px 16px;
+    background: var(--panel); border-top: 1px solid var(--line); border-right: 1px solid var(--line);
+    font-size: 11px; color: var(--muted);
+  }
+  @media (max-width: 720px) { .footer-note { position: static; width: 100%; border: 0; border-top: 1px solid var(--line); } }
+
+  @media print {
+    header button, .footer-note { display: none; }
+    header { background: #fff; color: #000; }
+    main { grid-template-columns: 1fr; display: block; }
+    #map { height: 400px; page-break-after: always; }
+    #panel { border: 0; overflow: visible; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="title">PROPERTY MEASURE</span>
+  <span class="sub">Davidson Co., TN</span>
+  <form id="search">
+    <input id="address" type="text" placeholder="e.g., 800 2nd Ave S, Nashville, TN"
+           autocomplete="street-address" />
+    <button id="go" type="submit">Look up</button>
+    <button type="button" class="print-btn" onclick="window.print()">Print</button>
+  </form>
+</header>
+
+<main>
+  <aside id="panel">
+    <div id="status" class="status">Enter an address to begin.</div>
+    <div id="report"></div>
+  </aside>
+  <div id="map"></div>
+</main>
+
+<div class="footer-note">
+  Data: OSM Nominatim · Nashville MetroGIS · OSM Overpass · USGS 3DEP.
+  Feet-level accuracy. Not a survey.
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+/* ============================================================
+   Property Measure — single-file tool for Davidson County, TN
+   All data from free public APIs. No keys required.
+   ============================================================ */
+
+const NOMINATIM = "https://nominatim.openstreetmap.org/search";
+const NASHVILLE_PARCELS =
+  "https://maps.nashville.gov/arcgis/rest/services/Cadastral/Parcels/MapServer/0/query";
+const OVERPASS = "https://overpass-api.de/api/interpreter";
+const USGS_ELEV = "https://epqs.nationalmap.gov/v1/json";
+
+const EARTH_R = 6371008.8;
+const M_TO_FT = 3.28084;
+const M2_TO_FT2 = 10.7639;
+const M2_TO_ACRE = 1 / 4046.8564;
+
+// ---------- geometry helpers (work on [lon,lat] rings) ----------
+
+function haversineM(lat1, lon1, lat2, lon2) {
+  const p1 = lat1 * Math.PI/180, p2 = lat2 * Math.PI/180;
+  const dp = (lat2 - lat1) * Math.PI/180, dl = (lon2 - lon1) * Math.PI/180;
+  const a = Math.sin(dp/2)**2 + Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;
+  return 2 * EARTH_R * Math.asin(Math.sqrt(a));
+}
+
+function perimeterM(ring) {
+  let t = 0;
+  for (let i = 0; i < ring.length - 1; i++) {
+    t += haversineM(ring[i][1], ring[i][0], ring[i+1][1], ring[i+1][0]);
+  }
+  return t;
+}
+
+function areaM2(ring) {
+  if (ring.length < 4) return 0;
+  let t = 0;
+  for (let i = 0; i < ring.length - 1; i++) {
+    const [lon1, lat1] = ring[i], [lon2, lat2] = ring[i+1];
+    t += (lon2 - lon1) * Math.PI/180 *
+         (2 + Math.sin(lat1 * Math.PI/180) + Math.sin(lat2 * Math.PI/180));
+  }
+  return Math.abs(t * EARTH_R * EARTH_R / 2);
+}
+
+function bboxOf(ring) {
+  let minX=Infinity, minY=Infinity, maxX=-Infinity, maxY=-Infinity;
+  for (const [x,y] of ring) {
+    if (x<minX) minX=x; if (x>maxX) maxX=x;
+    if (y<minY) minY=y; if (y>maxY) maxY=y;
+  }
+  return [minX, minY, maxX, maxY];
+}
+
+function pointInRing(lon, lat, ring) {
+  let inside = false;
+  for (let i=0, j=ring.length-1; i<ring.length; j=i++) {
+    const [xi,yi] = ring[i], [xj,yj] = ring[j];
+    if (((yi>lat) !== (yj>lat)) &&
+        (lon < (xj-xi)*(lat-yi)/(yj-yi+1e-18) + xi)) inside = !inside;
+  }
+  return inside;
+}
+
+// ---------- fetchers ----------
+
+async function geocode(address) {
+  const url = `${NOMINATIM}?format=json&limit=1&countrycodes=us&q=${encodeURIComponent(address)}`;
+  const r = await fetch(url, { headers: { "Accept": "application/json" } });
+  if (!r.ok) throw new Error(`Geocoder error ${r.status}`);
+  const arr = await r.json();
+  if (!arr.length) throw new Error(`Address not found: ${address}`);
+  return {
+    lat: parseFloat(arr[0].lat),
+    lon: parseFloat(arr[0].lon),
+    display: arr[0].display_name || address,
+  };
+}
+
+async function fetchParcel(lat, lon) {
+  const geometry = JSON.stringify({ x: lon, y: lat, spatialReference: { wkid: 4326 } });
+  const params = new URLSearchParams({
+    geometry,
+    geometryType: "esriGeometryPoint",
+    inSR: "4326",
+    spatialRel: "esriSpatialRelIntersects",
+    outFields: "*",
+    returnGeometry: "true",
+    outSR: "4326",
+    f: "geojson",
+  });
+  const r = await fetch(`${NASHVILLE_PARCELS}?${params}`);
+  if (!r.ok) throw new Error(`Parcel service error ${r.status}`);
+  const d = await r.json();
+  if (!d.features || !d.features.length) return null;
+  const f = d.features[0];
+  const g = f.geometry || {};
+  let rings = [];
+  if (g.type === "Polygon") rings = g.coordinates;
+  else if (g.type === "MultiPolygon") {
+    let best = null, bestA = -1;
+    for (const poly of g.coordinates) {
+      const a = areaM2(poly[0]);
+      if (a > bestA) { bestA = a; best = poly; }
+    }
+    rings = best || [];
+  }
+  return { rings, props: f.properties || {} };
+}
+
+async function fetchBuildings(minLon, minLat, maxLon, maxLat) {
+  const q = `[out:json][timeout:25];
+    (way["building"](${minLat},${minLon},${maxLat},${maxLon});
+     relation["building"](${minLat},${minLon},${maxLat},${maxLon}););
+    out geom tags;`;
+  const r = await fetch(OVERPASS, {
+    method: "POST",
+    body: "data=" + encodeURIComponent(q),
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+  });
+  if (!r.ok) throw new Error(`Overpass error ${r.status}`);
+  const d = await r.json();
+  const out = [];
+  for (const el of d.elements || []) {
+    const tags = el.tags || {};
+    if (el.type === "way" && el.geometry) {
+      let ring = el.geometry.map(p => [p.lon, p.lat]);
+      if (ring.length >= 3) {
+        if (ring[0][0] !== ring[ring.length-1][0] || ring[0][1] !== ring[ring.length-1][1]) {
+          ring.push(ring[0]);
+        }
+        out.push({ ring, tags });
+      }
+    } else if (el.type === "relation" && el.members) {
+      for (const m of el.members) {
+        if (m.role === "outer" && m.geometry) {
+          let ring = m.geometry.map(p => [p.lon, p.lat]);
+          if (ring.length >= 3) {
+            if (ring[0][0] !== ring[ring.length-1][0] || ring[0][1] !== ring[ring.length-1][1]) {
+              ring.push(ring[0]);
+            }
+            out.push({ ring, tags });
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
+async function fetchElevationFt(lat, lon) {
+  try {
+    const url = `${USGS_ELEV}?x=${lon}&y=${lat}&units=Feet&wkid=4326&includeDate=false`;
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    const d = await r.json();
+    let v = d.value;
+    if (v === undefined && d.USGS_Elevation_Point_Query_Service) {
+      v = d.USGS_Elevation_Point_Query_Service.Elevation_Query.Elevation;
+    }
+    const n = parseFloat(v);
+    return (isFinite(n) && n > -1000000) ? n : null;
+  } catch { return null; }
+}
+
+function estimateHeightFt(tags) {
+  if (!tags) return { ft: null, src: "no tags" };
+  if (tags.height) {
+    const n = parseFloat(String(tags.height).replace(/[^\d.]/g, ""));
+    if (isFinite(n)) return { ft: n * M_TO_FT, src: "OSM height" };
+  }
+  if (tags["building:levels"]) {
+    const lv = parseFloat(tags["building:levels"]);
+    if (isFinite(lv)) return { ft: lv * 10, src: `${lv} levels × 10 ft` };
+  }
+  return { ft: null, src: "no height data — measure on-site" };
+}
+
+// ---------- formatting ----------
+
+const fmtFt  = m  => `${(m * M_TO_FT).toLocaleString(undefined, {maximumFractionDigits:1})} ft`;
+const fmtFt2 = m2 => `${(m2 * M2_TO_FT2).toLocaleString(undefined, {maximumFractionDigits:0})} sq ft`;
+const fmtAc  = m2 => `${(m2 * M2_TO_ACRE).toFixed(3)} ac`;
+
+// ---------- map ----------
+
+let map, parcelLayer, bldLayer, marker;
+
+function initMap() {
+  map = L.map("map", { zoomControl: true }).setView([36.162, -86.781], 12);
+  const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    { maxZoom: 22, maxNativeZoom: 19, attribution: "© OpenStreetMap" });
+  const sat = L.tileLayer(
+    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    { maxZoom: 22, maxNativeZoom: 19, attribution: "Imagery © Esri" });
+  sat.addTo(map);
+  L.control.layers({ "Satellite": sat, "Street": osm }, {}).addTo(map);
+}
+
+function clearMap() {
+  if (parcelLayer) { map.removeLayer(parcelLayer); parcelLayer = null; }
+  if (bldLayer)    { map.removeLayer(bldLayer);    bldLayer    = null; }
+  if (marker)      { map.removeLayer(marker);      marker      = null; }
+}
+
+function drawOnMap(geo, parcel, buildings) {
+  clearMap();
+  marker = L.marker([geo.lat, geo.lon]).addTo(map);
+  if (parcel && parcel.rings.length) {
+    parcelLayer = L.geoJSON(
+      { type: "Feature", geometry: { type: "Polygon", coordinates: parcel.rings } },
+      { style: { color: "#c1440e", weight: 3, fillOpacity: 0.05 } }
+    ).addTo(map);
+    map.fitBounds(parcelLayer.getBounds(), { padding: [20, 20], maxZoom: 20 });
+  } else {
+    map.setView([geo.lat, geo.lon], 19);
+  }
+  if (buildings.length) {
+    bldLayer = L.geoJSON({
+      type: "FeatureCollection",
+      features: buildings.map(b => ({
+        type: "Feature",
+        geometry: { type: "Polygon", coordinates: [b.ring] },
+        properties: b.tags,
+      })),
+    }, { style: { color: "#1d4e7a", weight: 2, fillOpacity: 0.25 } }).addTo(map);
+  }
+}
+
+// ---------- render report ----------
+
+function renderReport(geo, parcel, buildings, elevCentroid, grade) {
+  const el = document.getElementById("report");
+  const parts = [];
+
+  parts.push(`<div class="section">
+    <h3>Location</h3>
+    <div class="kv"><span class="k">Matched</span><span class="v">${escapeHtml(geo.display)}</span></div>
+    <div class="kv"><span class="k">Lat / Lon</span><span class="v">${geo.lat.toFixed(6)}, ${geo.lon.toFixed(6)}</span></div>
+  </div>`);
+
+  if (parcel && parcel.rings.length) {
+    const outer = parcel.rings[0];
+    let area = areaM2(outer);
+    for (let i = 1; i < parcel.rings.length; i++) area -= areaM2(parcel.rings[i]);
+    const peri = perimeterM(outer);
+    const p = parcel.props;
+    const apn   = p.STANPAR || p.APN || p.PARCELID || "—";
+    const owner = p.OWNER   || p.OWNERNAME || "";
+    const addr  = p.PROPADDR || p.ADDRESS || "";
+
+    parts.push(`<div class="section">
+      <h3>Parcel</h3>
+      <div class="kv"><span class="k">Parcel ID</span><span class="v">${escapeHtml(apn)}</span></div>
+      ${owner ? `<div class="kv"><span class="k">Owner</span><span class="v">${escapeHtml(owner)}</span></div>` : ""}
+      ${addr  ? `<div class="kv"><span class="k">Address</span><span class="v">${escapeHtml(addr)}</span></div>` : ""}
+      <div class="kv"><span class="k">Perimeter</span><span class="v">${fmtFt(peri)}</span></div>
+      <div class="kv"><span class="k">Area</span><span class="v">${fmtFt2(area)} &middot; ${fmtAc(area)}</span></div>
+    </div>`);
+  } else {
+    parts.push(`<div class="section">
+      <h3>Parcel</h3>
+      <div class="warnbox">No parcel found at this point in the Davidson County layer.
+      This tool is scoped to Davidson County, TN.</div>
+    </div>`);
+  }
+
+  parts.push(`<div class="section"><h3>Structures on parcel</h3>`);
+  if (!buildings.length) {
+    parts.push(`<div class="empty">No building footprints found in OpenStreetMap on this lot. OSM coverage varies; small outbuildings are often missing.</div>`);
+  } else {
+    buildings.forEach((b, i) => {
+      const peri = perimeterM(b.ring);
+      const a = areaM2(b.ring);
+      const btype = b.tags.building || "building";
+      const name = b.tags.name ? ` — ${escapeHtml(b.tags.name)}` : "";
+      const h = estimateHeightFt(b.tags);
+      const heightLine = h.ft !== null
+        ? `<div class="kv"><span class="k">Height</span><span class="v">~${h.ft.toFixed(1)} ft <span class="note">${escapeHtml(h.src)}</span></span></div>`
+        : `<div class="kv"><span class="k">Height</span><span class="v" style="color:var(--warn)">${escapeHtml(h.src)}</span></div>`;
+      parts.push(`<div class="bldg">
+        <div class="bldg-title">Structure ${i+1}${name}<span class="tag">${escapeHtml(btype)}</span></div>
+        <div class="kv"><span class="k">Perimeter</span><span class="v">${fmtFt(peri)}</span></div>
+        <div class="kv"><span class="k">Footprint</span><span class="v">${fmtFt2(a)}</span></div>
+        ${heightLine}
+      </div>`);
+    });
+  }
+  parts.push(`</div>`);
+
+  parts.push(`<div class="section">
+    <h3>Elevation</h3>
+    ${elevCentroid !== null
+      ? `<div class="kv"><span class="k">At address</span><span class="v">${elevCentroid.toFixed(1)} ft</span></div>`
+      : `<div class="empty">Elevation unavailable.</div>`}
+    ${grade
+      ? `<div class="kv"><span class="k">Grade change</span><span class="v">${grade.delta.toFixed(1)} ft across lot
+         <span class="note">${grade.samples} corners, ${grade.min.toFixed(1)}–${grade.max.toFixed(1)} ft</span></span></div>`
+      : ""}
+  </div>`);
+
+  parts.push(`<div class="section">
+    <h3>Notes</h3>
+    <div class="note">Perimeter &amp; footprint numbers are feet-level accurate (±1–3 ft typical).
+    Building heights from OSM are rough — verify on-site with a laser or measuring tape.
+    Parcel lines reflect county GIS records, not a surveyed boundary.</div>
+  </div>`);
+
+  el.innerHTML = parts.join("");
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c =>
+    ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+}
+
+// ---------- main flow ----------
+
+async function lookup(address) {
+  const status = document.getElementById("status");
+  const report = document.getElementById("report");
+  const btn = document.getElementById("go");
+  status.className = "status";
+  report.innerHTML = "";
+  btn.disabled = true;
+
+  try {
+    status.textContent = "Geocoding address…";
+    const geo = await geocode(address);
+
+    status.textContent = "Fetching parcel from Nashville MetroGIS…";
+    const parcel = await fetchParcel(geo.lat, geo.lon);
+
+    status.textContent = "Fetching building footprints from OSM…";
+    let buildings = [];
+    if (parcel && parcel.rings.length) {
+      const outer = parcel.rings[0];
+      const [minX, minY, maxX, maxY] = bboxOf(outer);
+      const pad = 0.0005;
+      const all = await fetchBuildings(minX - pad, minY - pad, maxX + pad, maxY + pad);
+      buildings = all.filter(b => {
+        const cx = b.ring.slice(0, -1).reduce((s, p) => s + p[0], 0) / (b.ring.length - 1);
+        const cy = b.ring.slice(0, -1).reduce((s, p) => s + p[1], 0) / (b.ring.length - 1);
+        return pointInRing(cx, cy, outer);
+      });
+    }
+
+    status.textContent = "Fetching elevation from USGS…";
+    const elevCentroid = await fetchElevationFt(geo.lat, geo.lon);
+
+    let grade = null;
+    if (parcel && parcel.rings.length) {
+      const [minX, minY, maxX, maxY] = bboxOf(parcel.rings[0]);
+      const corners = [[minY,minX],[minY,maxX],[maxY,minX],[maxY,maxX]];
+      const results = [];
+      for (const [la, lo] of corners) {
+        const e = await fetchElevationFt(la, lo);
+        if (e !== null) results.push(e);
+      }
+      if (results.length) {
+        const mn = Math.min(...results), mx = Math.max(...results);
+        grade = { min: mn, max: mx, delta: mx - mn, samples: results.length };
+      }
+    }
+
+    drawOnMap(geo, parcel, buildings);
+    renderReport(geo, parcel, buildings, elevCentroid, grade);
+    status.textContent = `Done — ${new Date().toLocaleTimeString()}`;
+  } catch (err) {
+    status.className = "status error";
+    status.textContent = "Error: " + err.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ---------- wire up ----------
+
+document.getElementById("search").addEventListener("submit", e => {
+  e.preventDefault();
+  const addr = document.getElementById("address").value.trim();
+  if (!addr) return;
+  // If user didn't include a state, bias to TN
+  const q = /\b(tn|tennessee)\b/i.test(addr) ? addr : addr + ", Nashville, TN";
+  lookup(q);
+});
+
+initMap();
+</script>
+</body>
+</html>
