@@ -147,9 +147,12 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-const LOCATOR  = "https://maps.nashville.gov/arcgis2/rest/services/Locators/NashCompLocator/GeocodeServer";
-const PARCELS  = "https://maps.nashville.gov/arcgis/rest/services/Cadastral/Parcels/MapServer/0/query";
-const BLDGS    = "https://maps.nashville.gov/arcgis/rest/services/Planimetric/Buildings/MapServer/0/query";
+const PROXY = "https://corsproxy.io/?url=";
+const wrap = u => PROXY + encodeURIComponent(u);
+
+const LOCATOR  = wrap("https://maps.nashville.gov/arcgis2/rest/services/Locators/NashCompLocator/GeocodeServer");
+const PARCELS  = wrap("https://maps.nashville.gov/arcgis/rest/services/Cadastral/Parcels/MapServer/0/query");
+const BLDGS    = wrap("https://maps.nashville.gov/arcgis/rest/services/Planimetric/Buildings/MapServer/0/query");
 const USGS_ELEV = "https://epqs.nationalmap.gov/v1/json";
 
 const EARTH_R = 6371008.8;
